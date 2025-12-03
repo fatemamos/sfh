@@ -1,70 +1,71 @@
-# Design Choices
+# Design Decisions
 
-## Message Representation
-The message system is built using an object-oriented hierarchy.  
-A base `Message` class contains shared fields (sensor ID, message type), and each specific message type (`TEL`, `GPS`, `SET`) is implemented as its own subclass.  
-Each subclass handles its own parsing logic and validation rules.  
-
-This design avoids large `if/else` blocks and keeps the code modular, clear, and easy to extend if new message types are added in the future.
+## Message Classes
+The message-handling system is built around an abstract base class `Message` and three concrete subclasses for the different types: `TEL`, `GPS`, and `SET`.  
+This structure keeps validation rules isolated inside each specific message class while sharing common checks—such as sensor ID validation and message type checking—through the base class.  
+Using OOP keeps the code more organized, readable, and easy to extend if new message types are needed in the future.
 
 ---
 
-## Buffer Implementation
-The circular buffer uses a fixed-size Python list together with two pointers:
+## Circular Buffer Structure
+The circular buffer is implemented using the classic ring-buffer model with three internal variables:
 
-- **head** → points to the oldest message  
-- **tail** → points to the next free slot  
+- **head** – points to the oldest element  
+- **tail** – points to the next insertion point  
+- **size** – current message count  
 
-This structure guarantees **O(1)** push/pop operations and avoids shifting data like a regular list would.  
-The buffer is memory-efficient and behaves like a proper FIFO queue.
-
----
-
-## Event Flags
-The buffer supports three internal flags:
-
-- **overflow flag** – set when pushing into a full buffer  
-- **underflow flag** – set when popping from an empty buffer  
-- **data-loss-resize flag** – set when resizing causes message loss  
-
-All flags use a **sticky** design:  
-they remain `True` until the user explicitly checks them.  
-This makes it easy to detect rare events that may happen between operations.
+This design ensures **O(1)** push and pop operations without shifting any elements in memory.  
+It also makes overwrite behavior simple, since advancing the head automatically drops the oldest message.
 
 ---
 
-## Resizing Rules
-The buffer supports dynamic resizing with predictable behavior:
+## Flags Design
+The buffer uses sticky flags for:
 
-- **Increasing capacity**: always allowed; all messages preserved.
-- **Decreasing capacity (safe)**: allowed when current size ≤ new capacity.
-- **Decreasing with data loss**: allowed only if overwrite mode is enabled.
-- **Decreasing with data loss but overwrite=False**: resize is rejected.
+- **overflow**
+- **underflow**
+- **resize data loss**
 
-If a resize operation causes message loss, the buffer sets the `data_loss_resize_flag` so the user knows the buffer dropped old data.
-
----
-
-# Edge Cases Considered
-
-- Messages with incorrect length or non-digit sensor IDs  
-- Unknown message type strings  
-- Missing commas or extra arguments in GPS/SET messages  
-- Out-of-range values (battery %, latitude, longitude, msgs_per_second)  
-- Pushing to a full buffer with overwrite on/off  
-- Popping from an empty buffer with/without raising an exception  
-- Resizing smaller than the current message count  
-- Rejecting unsafe resize attempts  
-- Ensuring flags are set and cleared consistently  
-- Ensuring FIFO order remains valid after resizing  
+A sticky flag stays `True` until it is explicitly read.  
+This mimics hardware-style buffers, where events should not be missed even if they occur between operations.
 
 ---
 
-# Future Enhancements
+## Resize Strategy
+The buffer supports increasing and decreasing capacity with clear rules:
 
-- Add buffer visualization or debugging tools  
-- Add thread-safety for multi-threaded applications  
-- Add serialization (export/import of messages)  
-- Make the buffer iterable (`for msg in buffer:`)  
-- Add optional logging to monitor push/pop/resize events  
+- **Increasing size** → always allowed; no data loss.  
+- **Decreasing size (safe)** → allowed if the current number of messages fits.  
+- **Decreasing size (unsafe)**:
+  - If `overwrite=False` → resize is rejected.
+  - If `overwrite=True` → oldest messages are dropped, and the data-loss flag is set.
+
+This ensures predictable and controlled behavior when resizing while protecting the user from unexpected data loss.
+
+---
+
+# Edge Cases Handled
+
+- Sensor ID not exactly three digits  
+- Sensor ID containing non-numeric characters  
+- Unknown message type identifiers  
+- Incorrect GPS/SET formats (wrong number of fields, missing commas)  
+- Numeric values outside required ranges (battery %, latitude, longitude, etc.)  
+- Pushing into a full buffer with overwrite disabled  
+- Pushing into a full buffer with overwrite enabled (drops oldest)  
+- Popping from an empty buffer (returns `None` or raises exception)  
+- Attempting to shrink buffer below current size  
+- Resizing rejected when overwrite is off  
+- Resizing allowed with overwrite on (keeps newest messages)  
+- Flags only clear after being read  
+
+---
+
+# Possible Improvements
+
+- Add a debug/visualization function showing head/tail positions and buffer contents  
+- Implement serialization to save and load messages  
+- Add thread-safety for multi-threaded or real-time systems  
+- Make the buffer iterable (`for msg in buffer`)  
+- Add optional logging for buffer events such as overflow and underflow  
 
